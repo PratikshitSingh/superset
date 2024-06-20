@@ -1193,6 +1193,42 @@ def convert_legacy_filters_into_adhoc(  # pylint: disable=invalid-name
             del form_data[key]
 
 
+def resolve_simple_adhoc_filters_recursively(
+    adhoc_filters: list,
+):
+    """
+    Recursively resolve the adhoc filters into a structured dictionary suitable for SQLAlchemy nested filtering.
+    """
+    # Base case: If the list is empty, return an empty list
+    if not adhoc_filters:
+        return []
+    
+    filters = []
+    if all(isinstance(adhoc_filter, dict) for adhoc_filter in adhoc_filters):
+        # Base case: Simple filters at same level
+        for adhoc_filter in adhoc_filters:
+            if adhoc_filter.get("clause") == "WHERE":
+                filter_dict = {
+                    "col": adhoc_filter.get("subject"),
+                    "op": adhoc_filter.get("operator"),
+                    "val": adhoc_filter.get("comparator"),
+                }
+                filters.append(filter_dict)
+        return filters
+    
+    for adhoc_filter in adhoc_filters:
+        if isinstance(adhoc_filter, str):
+            operator = adhoc_filter
+        if isinstance(adhoc_filter, list):
+            # Recursive case: Process nested list
+            nested_result = resolve_simple_adhoc_filters_recursively(adhoc_filter)
+            if nested_result:
+                temp_dict = {operator: nested_result}
+                filters.append(temp_dict)
+
+    return filters
+
+
 def split_adhoc_filters_into_base_filters(  # pylint: disable=invalid-name
     form_data: FormData,
 ) -> None:
@@ -1201,33 +1237,37 @@ def split_adhoc_filters_into_base_filters(  # pylint: disable=invalid-name
     filters, `where`, `having`, and `filters` which represent free form where sql,
     free form having sql, and structured where clauses.
     """
+
+    """
+    [PRAT] The format of adhoc filter is changing to support nested OR condition
+    The format is as follows:
+    Note: 
+    1. If one one condition is present, then "AND" with 1
+    2. Can only use single operator at each level, to use both "AND" and "OR" use nested condition
+    """
     adhoc_filters = form_data.get("adhoc_filters")
     if isinstance(adhoc_filters, list):
-        simple_where_filters = []
         sql_where_filters = []
         sql_having_filters = []
+
+        resolved_where_filters = resolve_simple_adhoc_filters_recursively(adhoc_filters)
+        sql_where_filters = []
+        sql_having_filters = []
+        
         for adhoc_filter in adhoc_filters:
-            expression_type = adhoc_filter.get("expressionType")
-            clause = adhoc_filter.get("clause")
-            if expression_type == "SIMPLE":
-                if clause == "WHERE":
-                    simple_where_filters.append(
-                        {
-                            "col": adhoc_filter.get("subject"),
-                            "op": adhoc_filter.get("operator"),
-                            "val": adhoc_filter.get("comparator"),
-                        }
-                    )
-            elif expression_type == "SQL":
-                sql_expression = adhoc_filter.get("sqlExpression")
-                sql_expression = sanitize_clause(sql_expression)
-                if clause == "WHERE":
-                    sql_where_filters.append(sql_expression)
-                elif clause == "HAVING":
-                    sql_having_filters.append(sql_expression)
+            if isinstance(adhoc_filter, dict):
+                expression_type = adhoc_filter.get("expressionType")
+                clause = adhoc_filter.get("clause")
+                if expression_type == "SQL":
+                    sql_expression = adhoc_filter.get("sqlExpression")
+                    sql_expression = sanitize_clause(sql_expression)
+                    if clause == "WHERE":
+                        sql_where_filters.append(sql_expression)
+                    elif clause == "HAVING":
+                        sql_having_filters.append(sql_expression)
         form_data["where"] = " AND ".join([f"({sql})" for sql in sql_where_filters])
         form_data["having"] = " AND ".join([f"({sql})" for sql in sql_having_filters])
-        form_data["filters"] = simple_where_filters
+        form_data["filters"] = resolved_where_filters
 
 
 def get_user() -> User | None:

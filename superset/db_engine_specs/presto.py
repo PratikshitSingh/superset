@@ -477,6 +477,7 @@ class PrestoBaseEngineSpec(BaseEngineSpec, metaclass=ABCMeta):
             order_by_clause = "ORDER BY " + ", ".join(l)
 
         where_clause = ""
+        # [TODO] : Change this to handle OR conditions
         if filters:
             l = []  # noqa: E741
             for field, value in filters.items():

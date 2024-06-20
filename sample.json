@@ -1,0 +1,63 @@
+[
+    "AND",
+    [
+        "OR",
+        [
+            {
+                "expressionType": "SIMPLE",
+                "subject": "DEPT_ID",
+                "operator": "==",
+                "operatorId": "EQUALS",
+                "comparator": "FR-01",
+                "clause": "WHERE",
+                "sqlExpression": null,
+                "isExtra": false,
+                "isNew": false,
+                "datasourceWarning": false,
+                "filterOptionName": "filter_5og2mgl85u3_7wioyubks1"
+            },
+            {
+                "expressionType": "SIMPLE",
+                "subject": "dttm",
+                "operator": "TEMPORAL_RANGE",
+                "operatorId": "TEMPORAL_RANGE",
+                "comparator": "Last week",
+                "clause": "WHERE",
+                "sqlExpression": null,
+                "isExtra": false,
+                "isNew": false,
+                "datasourceWarning": false,
+                "filterOptionName": "filter_1t0l1sg2qck_qgr4wc4r49"
+            }
+        ],
+        "AND",
+        [
+            {
+                "expressionType": "SIMPLE",
+                "subject": "DEPT_ID",
+                "operator": "==",
+                "operatorId": "EQUALS",
+                "comparator": "FR-02",
+                "clause": "WHERE",
+                "sqlExpression": null,
+                "isExtra": false,
+                "isNew": false,
+                "datasourceWarning": false,
+                "filterOptionName": "filter_5og2mgl85u3_7wioyubks1"
+            },
+            {
+                "expressionType": "SIMPLE",
+                "subject": "dttm",
+                "operator": "TEMPORAL_RANGE",
+                "operatorId": "TEMPORAL_RANGE",
+                "comparator": "Last month",
+                "clause": "WHERE",
+                "sqlExpression": null,
+                "isExtra": false,
+                "isNew": false,
+                "datasourceWarning": false,
+                "filterOptionName": "filter_1t0l1sg2qck_qgr4wc4r49"
+            }
+        ]
+    ]
+]
