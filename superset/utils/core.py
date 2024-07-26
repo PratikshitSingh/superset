@@ -48,7 +48,7 @@ from enum import Enum, IntEnum
 from io import BytesIO
 from timeit import default_timer
 from types import TracebackType
-from typing import Any, Callable, cast, NamedTuple, TYPE_CHECKING, TypedDict, TypeVar
+from typing import Any, Callable, cast, NamedTuple, TYPE_CHECKING, TypedDict, TypeVar, Union
 from urllib.parse import unquote_plus
 from zipfile import ZipFile
 
@@ -1194,6 +1194,56 @@ def convert_legacy_filters_into_adhoc(  # pylint: disable=invalid-name
             del form_data[key]
 
 
+def resolve_simple_adhoc_filters(
+    adhoc_filters: list[Union[dict[str, Any], str, list[Any]]],
+) -> list[Any]:
+    """
+    Recursively resolve the adhoc filters into a structured dictionary suitable for SQLAlchemy nested filtering.
+    """
+    # Base case: If the list is empty, return an empty list
+    if not adhoc_filters:
+        return []
+
+    filters: list[Any] = []
+    if isinstance(adhoc_filters, list) and all(isinstance(adhoc_filter, dict) for adhoc_filter in adhoc_filters):
+        # Base case: Simple filters at same level
+        for adhoc_filter in adhoc_filters:
+            if isinstance(adhoc_filter, dict):
+                expression_type = adhoc_filter.get("expressionType")
+                clause = adhoc_filter.get("clause")
+                if expression_type == "SIMPLE":
+                    if clause == "WHERE":
+                        filter_dict = {
+                            "col": adhoc_filter.get("subject"),
+                            "op": adhoc_filter.get("operator"),
+                            "val": adhoc_filter.get("comparator"),
+                        }
+                        filters.append(filter_dict)
+        return filters
+
+    for adhoc_filter in adhoc_filters:
+        if isinstance(adhoc_filter, str):
+            operator = adhoc_filter
+        if isinstance(adhoc_filter, dict):
+            expression_type = adhoc_filter.get("expressionType")
+            clause = adhoc_filter.get("clause")
+            if expression_type == "SIMPLE":
+                if clause == "WHERE":
+                    filter_dict = {
+                        "col": adhoc_filter.get("subject"),
+                        "op": adhoc_filter.get("operator"),
+                        "val": adhoc_filter.get("comparator"),
+                    }
+                    filters.append(filter_dict)
+        if isinstance(adhoc_filter, list):
+            # Recursive case: Process nested list
+            nested_result = resolve_simple_adhoc_filters(adhoc_filter)
+            if nested_result:
+                temp_dict = {operator: nested_result}
+                filters.append(temp_dict)
+    return filters
+
+
 def split_adhoc_filters_into_base_filters(  # pylint: disable=invalid-name
     form_data: FormData,
 ) -> None:
@@ -1204,31 +1254,23 @@ def split_adhoc_filters_into_base_filters(  # pylint: disable=invalid-name
     """
     adhoc_filters = form_data.get("adhoc_filters")
     if isinstance(adhoc_filters, list):
-        simple_where_filters = []
+        resolved_simple_where_filters = resolve_simple_adhoc_filters(adhoc_filters)
         sql_where_filters = []
         sql_having_filters = []
         for adhoc_filter in adhoc_filters:
-            expression_type = adhoc_filter.get("expressionType")
-            clause = adhoc_filter.get("clause")
-            if expression_type == "SIMPLE":
-                if clause == "WHERE":
-                    simple_where_filters.append(
-                        {
-                            "col": adhoc_filter.get("subject"),
-                            "op": adhoc_filter.get("operator"),
-                            "val": adhoc_filter.get("comparator"),
-                        }
-                    )
-            elif expression_type == "SQL":
-                sql_expression = adhoc_filter.get("sqlExpression")
-                sql_expression = sanitize_clause(sql_expression)
-                if clause == "WHERE":
-                    sql_where_filters.append(sql_expression)
-                elif clause == "HAVING":
-                    sql_having_filters.append(sql_expression)
+            if isinstance(adhoc_filter, dict):
+                expression_type = adhoc_filter.get("expressionType")
+                clause = adhoc_filter.get("clause")
+                if expression_type == "SQL":
+                    sql_expression = adhoc_filter.get("sqlExpression")
+                    sql_expression = sanitize_clause(sql_expression)
+                    if clause == "WHERE":
+                        sql_where_filters.append(sql_expression)
+                    elif clause == "HAVING":
+                        sql_having_filters.append(sql_expression)
         form_data["where"] = " AND ".join([f"({sql})" for sql in sql_where_filters])
         form_data["having"] = " AND ".join([f"({sql})" for sql in sql_having_filters])
-        form_data["filters"] = simple_where_filters
+        form_data["filters"] = resolved_simple_where_filters
 
 
 def get_user() -> User | None:

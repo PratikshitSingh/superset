@@ -1757,188 +1757,239 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
         if groupby_all_columns:
             qry = qry.group_by(*groupby_all_columns.values())
 
-        where_clause_and = []
+        def generate_where_clause(filters: Union[list[Any], dict[str, Any], None]) -> list[Any]:
+            """
+            Generate a WHERE clause based on a list of filters.
+            :param filters: A list of filters
+            :return: A WHERE clause
+            """
+            where_clause: list[Any] = []
+            operator_mapping = {"AND": and_, "OR": or_}
+
+            if not filters:
+                return where_clause
+
+            if all(isinstance(flt, dict) and all(flt.get(s) for s in ["col", "op"]) for flt in filters):
+                # To process the base filters at the deepest level
+                for flt in filters:
+                    if isinstance(flt, dict):
+                        if not all(flt.get(s) for s in ["col", "op"]):
+                            continue
+                        flt_col = flt["col"]
+                        val = flt.get("val")
+                        flt_grain = flt.get("grain")
+                        op = flt["op"].upper()
+                        col_obj: Optional["TableColumn"] = None
+                        sqla_col: Optional[Column] = None
+                        if flt_col == utils.DTTM_ALIAS and is_timeseries and dttm_col:
+                            col_obj = dttm_col
+                        elif is_adhoc_column(flt_col):
+                            try:
+                                sqla_col = self.adhoc_column_to_sqla(flt_col, force_type_check=True)
+                                applied_adhoc_filters_columns.append(flt_col)
+                            except ColumnNotFoundException:
+                                rejected_adhoc_filters_columns.append(flt_col)
+                                continue
+                        else:
+                            col_obj = columns_by_name.get(cast(str, flt_col))
+                        filter_grain = flt.get("grain")
+
+                        if get_column_name(flt_col) in removed_filters:
+                            # Skip generating SQLA filter when the jinja template handles it.
+                            continue
+
+                        if col_obj or sqla_col is not None:
+                            if sqla_col is not None:
+                                pass
+                            elif col_obj and filter_grain:
+                                sqla_col = col_obj.get_timestamp_expression(
+                                    time_grain=filter_grain, template_processor=template_processor
+                                )
+                            elif col_obj:
+                                sqla_col = self.convert_tbl_column_to_sqla_col(
+                                    tbl_column=col_obj, template_processor=template_processor
+                                )
+                            col_type = col_obj.type if col_obj else None
+                            col_spec = db_engine_spec.get_column_spec(native_type=col_type)
+                            is_list_target = op in (
+                                utils.FilterOperator.IN.value,
+                                utils.FilterOperator.NOT_IN.value,
+                            )
+
+                            col_advanced_data_type = col_obj.advanced_data_type if col_obj else ""
+
+                            if col_spec and not col_advanced_data_type:
+                                target_generic_type = col_spec.generic_type
+                            else:
+                                target_generic_type = GenericDataType.STRING
+                            eq = self.filter_values_handler(
+                                values=val,
+                                operator=op,
+                                target_generic_type=target_generic_type,
+                                target_native_type=col_type,
+                                is_list_target=is_list_target,
+                                db_engine_spec=db_engine_spec,
+                            )
+                            if (
+                                col_advanced_data_type != ""
+                                and feature_flag_manager.is_feature_enabled(
+                                    "ENABLE_ADVANCED_DATA_TYPES"
+                                )
+                                and col_advanced_data_type in ADVANCED_DATA_TYPES
+                            ):
+                                values = eq if is_list_target else [eq]  # type: ignore
+                                bus_resp: AdvancedDataTypeResponse = ADVANCED_DATA_TYPES[
+                                    col_advanced_data_type
+                                ].translate_type(
+                                    {
+                                        "type": col_advanced_data_type,
+                                        "values": values,
+                                    }
+                                )
+                                if bus_resp["error_message"]:
+                                    raise AdvancedDataTypeResponseError(
+                                        _(bus_resp["error_message"])
+                                    )
+
+                                where_clause.append(
+                                    ADVANCED_DATA_TYPES[col_advanced_data_type].translate_filter(
+                                        sqla_col, op, bus_resp["values"]
+                                    )
+                                )
+                            elif is_list_target:
+                                assert isinstance(eq, (tuple, list))
+                                if len(eq) == 0:
+                                    raise QueryObjectValidationError(
+                                        _("Filter value list cannot be empty")
+                                    )
+                                if len(eq) > len(
+                                    eq_without_none := [x for x in eq if x is not None]
+                                ):
+                                    is_null_cond = sqla_col.is_(None)
+                                    if eq:
+                                        cond = or_(is_null_cond, sqla_col.in_(eq_without_none))
+                                    else:
+                                        cond = is_null_cond
+                                else:
+                                    cond = sqla_col.in_(eq)
+                                if op == utils.FilterOperator.NOT_IN.value:
+                                    cond = ~cond
+                                where_clause.append(cond)
+                            elif op == utils.FilterOperator.IS_NULL.value:
+                                where_clause.append(sqla_col.is_(None))
+                            elif op == utils.FilterOperator.IS_NOT_NULL.value:
+                                where_clause.append(sqla_col.isnot(None))
+                            elif op == utils.FilterOperator.IS_TRUE.value:
+                                where_clause.append(sqla_col.is_(True))
+                            elif op == utils.FilterOperator.IS_FALSE.value:
+                                where_clause.append(sqla_col.is_(False))
+                            else:
+                                if (
+                                    op
+                                    not in {
+                                        utils.FilterOperator.EQUALS.value,
+                                        utils.FilterOperator.NOT_EQUALS.value,
+                                    }
+                                    and eq is None
+                                ):
+                                    raise QueryObjectValidationError(
+                                        _(
+                                            "Must specify a value for filters "
+                                            "with comparison operators"
+                                        )
+                                    )
+                                if op == utils.FilterOperator.EQUALS.value:
+                                    where_clause.append(sqla_col == eq)
+                                elif op == utils.FilterOperator.NOT_EQUALS.value:
+                                    where_clause.append(sqla_col != eq)
+                                elif op == utils.FilterOperator.GREATER_THAN.value:
+                                    where_clause.append(sqla_col > eq)
+                                elif op == utils.FilterOperator.LESS_THAN.value:
+                                    where_clause.append(sqla_col < eq)
+                                elif op == utils.FilterOperator.GREATER_THAN_OR_EQUALS.value:
+                                    where_clause.append(sqla_col >= eq)
+                                elif op == utils.FilterOperator.LESS_THAN_OR_EQUALS.value:
+                                    where_clause.append(sqla_col <= eq)
+                                elif op in {
+                                    utils.FilterOperator.ILIKE.value,
+                                    utils.FilterOperator.LIKE.value,
+                                }:
+                                    if target_generic_type != GenericDataType.STRING:
+                                        sqla_col = sa.cast(sqla_col, sa.String)
+
+                                    if op == utils.FilterOperator.LIKE.value:
+                                        where_clause.append(sqla_col.like(eq))
+                                    else:
+                                        where_clause.append(sqla_col.ilike(eq))
+                                elif (
+                                    op == utils.FilterOperator.TEMPORAL_RANGE.value
+                                    and isinstance(eq, str)
+                                    and col_obj is not None
+                                ):
+                                    _since, _until = get_since_until_from_time_range(
+                                        time_range=eq,
+                                        time_shift=time_shift,
+                                        extras=extras,
+                                    )
+                                    where_clause.append(
+                                        self.get_time_filter(
+                                            time_col=col_obj,
+                                            start_dttm=_since,
+                                            end_dttm=_until,
+                                            time_grain=flt_grain,
+                                            label=sqla_col.key,
+                                            template_processor=template_processor,
+                                        )
+                                    )
+                                else:
+                                    raise QueryObjectValidationError(
+                                        _("Invalid filter operation type: %(op)s", op=op)
+                                    )
+                return where_clause
+
+            if isinstance(filters, list):
+                for filter in filters:
+                    if isinstance(filter, dict):
+                        # Handle base condition
+                        if all(key in filter for key in ["col", "op"]):
+                            clause = generate_where_clause([filter])
+                            if clause:
+                                where_clause.append(*clause) 
+                        else:
+                            for operator, value in filter.items():
+                                if isinstance(value, list):
+                                    clause = generate_where_clause(value)
+                                    if clause:
+                                        where_clause.append(operator_mapping[operator](*clause).self_group())
+
+            return where_clause
+
+        def flatten_nested_filters(nested_filters: Union[dict[str, Any], list[Any]]) -> list[dict[str, str]]:
+            """
+            Flatten a nested query to a list of filters.
+            """
+            filters = []
+
+            def flatten_helper(item: Union[dict[str, Any], list[Any]]) -> None:
+                if isinstance(item, dict):
+                    if "col" in item:  # Checks if the dictionary is a condition
+                        filters.append(item)
+                    else:  # Otherwise, it's a nested logical operator
+                        for value in item.values():
+                            flatten_helper(value)
+
+                elif isinstance(item, list):  # Iterate through the list if the item is a list
+                    for subitem in item:
+                        flatten_helper(subitem)
+
+            flatten_helper(nested_filters)
+            return filters
+
+        flattened_filter = flatten_nested_filters(filter)
+        where_clause = generate_where_clause(filter)
         having_clause_and = []
 
-        for flt in filter:  # type: ignore
-            if not all(flt.get(s) for s in ["col", "op"]):
-                continue
-            flt_col = flt["col"]
-            val = flt.get("val")
-            flt_grain = flt.get("grain")
-            op = flt["op"].upper()
-            col_obj: Optional["TableColumn"] = None
-            sqla_col: Optional[Column] = None
-            if flt_col == utils.DTTM_ALIAS and is_timeseries and dttm_col:
-                col_obj = dttm_col
-            elif is_adhoc_column(flt_col):
-                try:
-                    sqla_col = self.adhoc_column_to_sqla(flt_col, force_type_check=True)
-                    applied_adhoc_filters_columns.append(flt_col)
-                except ColumnNotFoundException:
-                    rejected_adhoc_filters_columns.append(flt_col)
-                    continue
-            else:
-                col_obj = columns_by_name.get(cast(str, flt_col))
-            filter_grain = flt.get("grain")
-
-            if get_column_name(flt_col) in removed_filters:
-                # Skip generating SQLA filter when the jinja template handles it.
-                continue
-
-            if col_obj or sqla_col is not None:
-                if sqla_col is not None:
-                    pass
-                elif col_obj and filter_grain:
-                    sqla_col = col_obj.get_timestamp_expression(
-                        time_grain=filter_grain, template_processor=template_processor
-                    )
-                elif col_obj:
-                    sqla_col = self.convert_tbl_column_to_sqla_col(
-                        tbl_column=col_obj, template_processor=template_processor
-                    )
-                col_type = col_obj.type if col_obj else None
-                col_spec = db_engine_spec.get_column_spec(native_type=col_type)
-                is_list_target = op in (
-                    utils.FilterOperator.IN.value,
-                    utils.FilterOperator.NOT_IN.value,
-                )
-
-                col_advanced_data_type = col_obj.advanced_data_type if col_obj else ""
-
-                if col_spec and not col_advanced_data_type:
-                    target_generic_type = col_spec.generic_type
-                else:
-                    target_generic_type = GenericDataType.STRING
-                eq = self.filter_values_handler(
-                    values=val,
-                    operator=op,
-                    target_generic_type=target_generic_type,
-                    target_native_type=col_type,
-                    is_list_target=is_list_target,
-                    db_engine_spec=db_engine_spec,
-                )
-                if (
-                    col_advanced_data_type != ""
-                    and feature_flag_manager.is_feature_enabled(
-                        "ENABLE_ADVANCED_DATA_TYPES"
-                    )
-                    and col_advanced_data_type in ADVANCED_DATA_TYPES
-                ):
-                    values = eq if is_list_target else [eq]  # type: ignore
-                    bus_resp: AdvancedDataTypeResponse = ADVANCED_DATA_TYPES[
-                        col_advanced_data_type
-                    ].translate_type(
-                        {
-                            "type": col_advanced_data_type,
-                            "values": values,
-                        }
-                    )
-                    if bus_resp["error_message"]:
-                        raise AdvancedDataTypeResponseError(
-                            _(bus_resp["error_message"])
-                        )
-
-                    where_clause_and.append(
-                        ADVANCED_DATA_TYPES[col_advanced_data_type].translate_filter(
-                            sqla_col, op, bus_resp["values"]
-                        )
-                    )
-                elif is_list_target:
-                    assert isinstance(eq, (tuple, list))
-                    if len(eq) == 0:
-                        raise QueryObjectValidationError(
-                            _("Filter value list cannot be empty")
-                        )
-                    if len(eq) > len(
-                        eq_without_none := [x for x in eq if x is not None]
-                    ):
-                        is_null_cond = sqla_col.is_(None)
-                        if eq:
-                            cond = or_(is_null_cond, sqla_col.in_(eq_without_none))
-                        else:
-                            cond = is_null_cond
-                    else:
-                        cond = sqla_col.in_(eq)
-                    if op == utils.FilterOperator.NOT_IN.value:
-                        cond = ~cond
-                    where_clause_and.append(cond)
-                elif op == utils.FilterOperator.IS_NULL.value:
-                    where_clause_and.append(sqla_col.is_(None))
-                elif op == utils.FilterOperator.IS_NOT_NULL.value:
-                    where_clause_and.append(sqla_col.isnot(None))
-                elif op == utils.FilterOperator.IS_TRUE.value:
-                    where_clause_and.append(sqla_col.is_(True))
-                elif op == utils.FilterOperator.IS_FALSE.value:
-                    where_clause_and.append(sqla_col.is_(False))
-                else:
-                    if (
-                        op
-                        not in {
-                            utils.FilterOperator.EQUALS.value,
-                            utils.FilterOperator.NOT_EQUALS.value,
-                        }
-                        and eq is None
-                    ):
-                        raise QueryObjectValidationError(
-                            _(
-                                "Must specify a value for filters "
-                                "with comparison operators"
-                            )
-                        )
-                    if op == utils.FilterOperator.EQUALS.value:
-                        where_clause_and.append(sqla_col == eq)
-                    elif op == utils.FilterOperator.NOT_EQUALS.value:
-                        where_clause_and.append(sqla_col != eq)
-                    elif op == utils.FilterOperator.GREATER_THAN.value:
-                        where_clause_and.append(sqla_col > eq)
-                    elif op == utils.FilterOperator.LESS_THAN.value:
-                        where_clause_and.append(sqla_col < eq)
-                    elif op == utils.FilterOperator.GREATER_THAN_OR_EQUALS.value:
-                        where_clause_and.append(sqla_col >= eq)
-                    elif op == utils.FilterOperator.LESS_THAN_OR_EQUALS.value:
-                        where_clause_and.append(sqla_col <= eq)
-                    elif op in {
-                        utils.FilterOperator.ILIKE.value,
-                        utils.FilterOperator.LIKE.value,
-                    }:
-                        if target_generic_type != GenericDataType.STRING:
-                            sqla_col = sa.cast(sqla_col, sa.String)
-
-                        if op == utils.FilterOperator.LIKE.value:
-                            where_clause_and.append(sqla_col.like(eq))
-                        else:
-                            where_clause_and.append(sqla_col.ilike(eq))
-                    elif op in {utils.FilterOperator.NOT_LIKE.value}:
-                        if target_generic_type != GenericDataType.STRING:
-                            sqla_col = sa.cast(sqla_col, sa.String)
-
-                        where_clause_and.append(sqla_col.not_like(eq))
-                    elif (
-                        op == utils.FilterOperator.TEMPORAL_RANGE.value
-                        and isinstance(eq, str)
-                        and col_obj is not None
-                    ):
-                        _since, _until = get_since_until_from_time_range(
-                            time_range=eq,
-                            time_shift=time_shift,
-                            extras=extras,
-                        )
-                        where_clause_and.append(
-                            self.get_time_filter(
-                                time_col=col_obj,
-                                start_dttm=_since,
-                                end_dttm=_until,
-                                time_grain=flt_grain,
-                                label=sqla_col.key,
-                                template_processor=template_processor,
-                            )
-                        )
-                    else:
-                        raise QueryObjectValidationError(
-                            _("Invalid filter operation type: %(op)s", op=op)
-                        )
-        where_clause_and += self.get_sqla_row_level_filters(template_processor)
+        where_clause += self.get_sqla_row_level_filters(template_processor)
         if extras:
             where = extras.get("where")
             if where:
@@ -1957,7 +2008,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
                     schema=self.schema,
                     template_processor=template_processor,
                 )
-                where_clause_and += [self.text(where)]
+                where_clause += [self.text(where)]
             having = extras.get("having")
             if having:
                 try:
@@ -1982,9 +2033,9 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
                 self.get_fetch_values_predicate(template_processor=template_processor)
             )
         if granularity:
-            qry = qry.where(and_(*(time_filters + where_clause_and)))
+            qry = qry.where(and_(*(time_filters + where_clause)))
         else:
-            qry = qry.where(and_(*where_clause_and))
+            qry = qry.where(and_(*where_clause))
         qry = qry.having(and_(*having_clause_and))
 
         self.make_orderby_compatible(select_exprs, orderby_exprs)
@@ -2039,7 +2090,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
                             template_processor=template_processor,
                         )
                     ]
-                subq = subq.where(and_(*(where_clause_and + inner_time_filter)))
+                subq = subq.where(and_(*(where_clause + inner_time_filter)))
                 subq = subq.group_by(*inner_groupby_exprs)
 
                 ob = inner_main_metric_expr
@@ -2117,7 +2168,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
             qry = sa.select([col]).select_from(qry.alias("rowcount_qry"))
             labels_expected = [label]
 
-        filter_columns = [flt.get("col") for flt in filter] if filter else []
+        filter_columns = [flt.get("col") for flt in flattened_filter] if flattened_filter else []
         rejected_filter_columns = [
             col
             for col in filter_columns
