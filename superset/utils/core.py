@@ -1262,6 +1262,7 @@ def split_adhoc_filters_into_base_filters(  # pylint: disable=invalid-name
                 expression_type = adhoc_filter.get("expressionType")
                 clause = adhoc_filter.get("clause")
                 if expression_type == "SQL":
+                    print("PRAT LOG: ", adhoc_filter.get("sqlExpression"))
                     sql_expression = adhoc_filter.get("sqlExpression")
                     sql_expression = sanitize_clause(sql_expression)
                     if clause == "WHERE":
