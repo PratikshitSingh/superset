@@ -1453,9 +1453,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
         apply_fetch_values_predicate: bool = False,
         columns: Optional[list[Column]] = None,
         extras: Optional[dict[str, Any]] = None,
-        filter: Optional[  # pylint: disable=redefined-builtin
-            Union[Dict[str, Any], List[Any]]
-        ] = None,
+        filter: Union[Dict[str, Any], List[Any], None] = None, # pylint: disable=redefined-builtin
         from_dttm: Optional[datetime] = None,
         granularity: Optional[str] = None,
         groupby: Optional[list[Column]] = None,
@@ -1965,16 +1963,16 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
             return where_clause
 
         def flatten_nested_filters(
-            nested_filters: Optional[  # pylint: disable=redefined-builtin
-                Union[Dict[str, Any], List[Any]]
-            ] = None
+            nested_filters: Union[Dict[str, Any], List[Any], None]
         ) -> list[Dict[str, Any]]:
             """
             Flatten a nested query to a list of filters.
             """
             filters = []
 
-            def flatten_helper(item: Union[dict[str, Any], list[Any]]) -> None:
+            def flatten_helper(
+                item: Union[Dict[str, Any], List[Any], None]
+            ) -> None:
                 if isinstance(item, dict):
                     if "col" in item:  # Checks if the dictionary is a condition
                         filters.append(item)
