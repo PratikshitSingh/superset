@@ -1454,7 +1454,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
         columns: Optional[list[Column]] = None,
         extras: Optional[dict[str, Any]] = None,
         filter: Optional[  # pylint: disable=redefined-builtin
-            Union[Dict[str, Any], List[Any], None]
+            Union[Dict[str, Any], List[Any]]
         ] = None,
         from_dttm: Optional[datetime] = None,
         granularity: Optional[str] = None,
@@ -1964,7 +1964,11 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
 
             return where_clause
 
-        def flatten_nested_filters(nested_filters: Union[Dict[str, Any], List[Any], None] ) -> list[Dict[str, Any]]:
+        def flatten_nested_filters(
+            nested_filters: Optional[  # pylint: disable=redefined-builtin
+                Union[Dict[str, Any], List[Any]]
+            ] = None
+        ) -> list[Dict[str, Any]]:
             """
             Flatten a nested query to a list of filters.
             """
