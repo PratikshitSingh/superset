@@ -25,7 +25,7 @@ import uuid
 from collections import defaultdict
 from collections.abc import Hashable
 from datetime import datetime, timedelta
-from typing import Any, cast, NamedTuple, Optional, TYPE_CHECKING, Union
+from typing import Any, cast, Dict, NamedTuple, List, Optional, TYPE_CHECKING, Union
 
 import dateutil.parser
 import humanize
@@ -1454,7 +1454,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
         columns: Optional[list[Column]] = None,
         extras: Optional[dict[str, Any]] = None,
         filter: Optional[  # pylint: disable=redefined-builtin
-            list[Any]
+            Union[Dict[str, Any], List[Any], None]
         ] = None,
         from_dttm: Optional[datetime] = None,
         granularity: Optional[str] = None,
@@ -1964,7 +1964,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
 
             return where_clause
 
-        def flatten_nested_filters(nested_filters: Optional[ list[Any] ] ) -> list[utils.QueryObjectFilterClause]:
+        def flatten_nested_filters(nested_filters: Union[Dict[str, Any], List[Any], None] ) -> list[Dict[str, Any]]:
             """
             Flatten a nested query to a list of filters.
             """
@@ -1985,7 +1985,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
             flatten_helper(nested_filters)
             return filters
 
-        flattened_filter: list[utils.QueryObjectFilterClause] = flatten_nested_filters(filter)
+        flattened_filter = flatten_nested_filters(filter)
         where_clause = generate_where_clause(filter)
         having_clause_and = []
 
