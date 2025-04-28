@@ -1742,7 +1742,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
         if groupby_all_columns:
             qry = qry.group_by(*groupby_all_columns.values())
 
-        def generate_where_clause(filters: Union[list[Any], dict[str, Any], None]) -> list[Any]:
+        def get_where_clause(filters: Union[list[Any], dict[str, Any], None]) -> list[Any]:
             """
             Generate a WHERE clause based on a list of filters.
             :param filters: A list of filters
@@ -1754,7 +1754,9 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
             if not filters:
                 return where_clause
 
-            if all(isinstance(flt, dict) and all(flt.get(s) for s in ["col", "op"]) for flt in filters):
+            if all(
+                isinstance(flt, dict) 
+                   and all(flt.get(s) for s in ["col", "op"]) for flt in filters):
                 # To process the base filters at the deepest level
                 for flt in filters:
                     if isinstance(flt, dict):
@@ -1770,7 +1772,9 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
                             col_obj = dttm_col
                         elif is_adhoc_column(flt_col):
                             try:
-                                sqla_col = self.adhoc_column_to_sqla(flt_col, force_type_check=True)
+                                sqla_col = self.adhoc_column_to_sqla(
+                                    flt_col, force_type_check=True
+                                    )
                                 applied_adhoc_filters_columns.append(flt_col)
                             except ColumnNotFoundException:
                                 rejected_adhoc_filters_columns.append(flt_col)
@@ -1779,8 +1783,8 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
                             col_obj = columns_by_name.get(cast(str, flt_col))
                         filter_grain = flt.get("grain")
 
+                        # Skip generating SQLA filter when jinja template handles it.
                         if get_column_name(flt_col) in removed_filters:
-                            # Skip generating SQLA filter when the jinja template handles it.
                             continue
 
                         if col_obj or sqla_col is not None:
@@ -1788,14 +1792,18 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
                                 pass
                             elif col_obj and filter_grain:
                                 sqla_col = col_obj.get_timestamp_expression(
-                                    time_grain=filter_grain, template_processor=template_processor
+                                    time_grain=filter_grain, 
+                                    template_processor=template_processor
                                 )
                             elif col_obj:
                                 sqla_col = self.convert_tbl_column_to_sqla_col(
-                                    tbl_column=col_obj, template_processor=template_processor
+                                    tbl_column=col_obj, 
+                                    template_processor=template_processor
                                 )
                             col_type = col_obj.type if col_obj else None
-                            col_spec = db_engine_spec.get_column_spec(native_type=col_type)
+                            col_spec = db_engine_spec.get_column_spec(
+                                native_type=col_type
+                            )
                             is_list_target = op in (
                                 utils.FilterOperator.IN.value,
                                 utils.FilterOperator.NOT_IN.value,
@@ -1937,13 +1945,13 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
                     if isinstance(filter, dict):
                         # Handle base condition
                         if all(key in filter for key in ["col", "op"]):
-                            clause = generate_where_clause([filter])
+                            clause = get_where_clause([filter])
                             if clause:
                                 where_clause.append(*clause) 
                         else:
                             for operator, value in filter.items():
                                 if isinstance(value, list):
-                                    clause = generate_where_clause(value)
+                                    clause = get_where_clause(value)
                                     if clause:
                                         where_clause.append(operator_mapping[operator](*clause).self_group())
 
@@ -1975,7 +1983,7 @@ class ExploreMixin:  # pylint: disable=too-many-public-methods
             return filters
 
         flattened_filter = flatten_nested_filters(filter)
-        where_clause = generate_where_clause(filter)
+        where_clause = get_where_clause(filter)
         having_clause_and = []
 
         where_clause += self.get_sqla_row_level_filters(template_processor)
