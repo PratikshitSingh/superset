@@ -34,9 +34,12 @@ import ImageLoader from 'src/components/ListViewCard/ImageLoader';
 import { usePluginContext } from 'src/components/DynamicPlugins';
 import { Tooltip } from 'src/components/Tooltip';
 import { GenericLink } from 'src/components/GenericLink/GenericLink';
+import { assetUrl } from 'src/utils/assetUrl';
 import { Theme } from '@emotion/react';
 
-const FALLBACK_THUMBNAIL_URL = '/static/assets/images/chart-card-fallback.svg';
+const FALLBACK_THUMBNAIL_URL = assetUrl(
+  '/static/assets/images/chart-card-fallback.svg',
+);
 
 const TruncatedTextWithTooltip = ({
   children,
@@ -124,7 +127,6 @@ const SliceAddedBadgePlaceholder: FC<{
       border-radius: ${theme.gridUnit}px;
       color: ${theme.colors.primary.dark1};
       font-size: ${theme.typography.sizes.xs}px;
-      text-transform: uppercase;
       letter-spacing: 0.02em;
       padding: ${theme.gridUnit / 2}px ${theme.gridUnit * 2}px;
       margin-left: ${theme.gridUnit * 4}px;
@@ -151,7 +153,6 @@ const SliceAddedBadge: FC<{ placeholder?: HTMLDivElement }> = ({
       border-radius: ${theme.gridUnit}px;
       color: ${theme.colors.primary.dark1};
       font-size: ${theme.typography.sizes.xs}px;
-      text-transform: uppercase;
       letter-spacing: 0.02em;
       padding: ${theme.gridUnit / 2}px ${theme.gridUnit * 2}px;
       margin-left: ${theme.gridUnit * 4}px;
@@ -176,7 +177,7 @@ const AddSliceCard: FC<{
   lastModified?: string;
   sliceName: string;
   style?: CSSProperties;
-  thumbnailUrl?: string;
+  thumbnailUrl?: string | null;
   visType: string;
 }> = ({
   datasourceUrl,
